@@ -1,0 +1,28 @@
+spring:
+  application:
+    name: seatbook
+  datasource:
+    url: ${SEATBOOK_DB_URL:jdbc:mysql://127.0.0.1:3306/seatbook}
+    username: ${SEATBOOK_DB_USER:seatbook}
+    password: ${SEATBOOK_DB_PASSWORD}
+    hikari:
+      maximum-pool-size: 12
+  mvc:
+    problemdetails:
+      enabled: true
+server:
+  address: ${SEATBOOK_BIND_ADDRESS:127.0.0.1}
+  port: ${SEATBOOK_PORT:8080}
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+seatbook:
+  zone: Asia/Shanghai
+  jwt-secret: ${SEATBOOK_JWT_SECRET}
+  admin-password: ${SEATBOOK_ADMIN_PASSWORD:}
+springdoc:
+  paths-to-match: /api/**
+  swagger-ui:
+    tags-sorter: alpha

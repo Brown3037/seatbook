@@ -1,0 +1,31 @@
+services:
+  db:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: seatbook
+      MYSQL_USER: seatbook
+      MYSQL_PASSWORD: ${SEATBOOK_DB_PASSWORD:?Generate the .env file first}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Generate the .env file first}
+    volumes:
+      - seatbook-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${SEATBOOK_HOST_PORT:-8080}:8080"
+    environment:
+      SEATBOOK_BIND_ADDRESS: 0.0.0.0
+      SEATBOOK_DB_URL: jdbc:mysql://db:3306/seatbook
+      SEATBOOK_DB_USER: seatbook
+      SEATBOOK_DB_PASSWORD: ${SEATBOOK_DB_PASSWORD:?Generate the .env file first}
+      SEATBOOK_JWT_SECRET: ${SEATBOOK_JWT_SECRET:?Generate the .env file first}
+      SEATBOOK_ADMIN_PASSWORD: ${SEATBOOK_ADMIN_PASSWORD:?Generate the .env file first}
+volumes:
+  seatbook-data:

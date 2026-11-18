@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Seatbook · 校园自习室预约</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+<header class="site-header">
+  <div class="frame topbar">
+    <a class="brand" href="/">Seatbook</a>
+    <a class="api-link" href="/swagger-ui/index.html">API 文档 ↗</a>
+  </div>
+</header>
+<main class="frame">
+  <div class="intro">
+    <h1>校园自习室预约</h1>
+    <p>选择自习室、日期和时段，查看可预约的座位。</p>
+  </div>
+  <div class="layout">
+    <section class="card" aria-labelledby="seat-title">
+      <div class="heading">
+        <h2 id="seat-title">选择座位</h2>
+        <span class="meta" id="campus-time"></span>
+      </div>
+      <div class="filters">
+        <label>自习室<select id="room" disabled></select></label>
+        <label>日期<input id="day" type="date" required disabled></label>
+        <label>时段<select id="period" disabled></select></label>
+      </div>
+      <div class="availability">
+        <span id="slot-summary" role="status">正在加载自习室…</span>
+        <button id="publish" type="button" hidden>开放所选时段</button>
+      </div>
+      <div class="seat-grid" id="seats" aria-label="座位列表"></div>
+      <p id="slot-message" class="feedback" role="status"></p>
+    </section>
+    <section class="card account" aria-labelledby="account-title">
+      <h2 id="account-title">账号</h2>
+      <form id="auth-form">
+        <label>用户名<input id="username" autocomplete="username" required minlength="3" maxlength="32"
+          pattern="[A-Za-z0-9_]{3,32}" title="3–32 位字母、数字或下划线"></label>
+        <label>密码<input id="password" type="password" autocomplete="current-password" required minlength="10" maxlength="64"></label>
+        <div class="actions">
+          <button type="submit">登录</button>
+          <button type="button" class="secondary" id="register">注册学生账号</button>
+        </div>
+      </form>
+      <div id="session-info" hidden>
+        <p id="identity"></p>
+        <button type="button" class="secondary" id="logout">退出登录</button>
+      </div>
+      <p id="auth-message" class="feedback" role="status"></p>
+    </section>
+    <section class="card history" id="history" aria-labelledby="history-title" hidden>
+      <h2 id="history-title">我的预约</h2>
+      <ul id="booking-list" class="booking-list"></ul>
+      <p id="booking-message" class="feedback" role="status"></p>
+      <button id="more" type="button" class="secondary" hidden>加载更多</button>
+    </section>
+  </div>
+</main>
+</body>
+</html>
