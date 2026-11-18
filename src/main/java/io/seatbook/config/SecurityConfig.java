@@ -52,7 +52,7 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.POST, "/api/auth/register", "/api/auth/login").permitAll()
                 .requestMatchers(HttpMethod.GET, "/api/rooms", "/api/rooms/*/slots", "/api/schedule").permitAll()
                 .requestMatchers("/api/admin/**").hasRole("ADMIN")
-                .requestMatchers("/api/bookings", "/api/bookings/**").hasRole("STUDENT")
+                .requestMatchers("/api/bookings", "/api/bookings/**", "/api/notifications").hasRole("STUDENT")
                 .anyRequest().denyAll())
             .oauth2ResourceServer(resource -> resource.jwt(jwt -> jwt.jwtAuthenticationConverter(jwtConverter)))
             .httpBasic(AbstractHttpConfigurer::disable)

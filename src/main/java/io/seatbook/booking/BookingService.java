@@ -1,11 +1,13 @@
 package io.seatbook.booking;
 
 import io.seatbook.common.ApiException;
+import io.seatbook.notification.BookingOutbox;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -17,7 +19,7 @@ import org.springframework.transaction.annotation.Transactional;
 class BookingService {
     private static final String BOOKING_VIEW = """
         SELECT b.id, b.slot_id, b.study_day, b.period, b.created_at, b.cancelled_at,
-               r.name AS room_name, s.label AS seat_label
+               r.id AS room_id, r.name AS room_name, s.label AS seat_label
         FROM bookings b
         JOIN seat_slots slot ON slot.id = b.slot_id
         JOIN seats s ON s.id = slot.seat_id
@@ -26,10 +28,14 @@ class BookingService {
 
     private final JdbcClient db;
     private final ScheduleRules rules;
+    private final BookingOutbox outbox;
+    private final ApplicationEventPublisher events;
 
-    BookingService(JdbcClient db, ScheduleRules rules) {
+    BookingService(JdbcClient db, ScheduleRules rules, BookingOutbox outbox, ApplicationEventPublisher events) {
         this.db = db;
         this.rules = rules;
+        this.outbox = outbox;
+        this.events = events;
     }
 
     @Transactional
@@ -52,7 +58,10 @@ class BookingService {
             throw new ApiException(HttpStatus.CONFLICT, "BOOKING_CONFLICT",
                 "该座位已被预约，或你在同一时段已有预约");
         }
-        return find(userId, key.getKey().longValue(), now);
+        Booking booking = find(userId, key.getKey().longValue(), now);
+        outbox.recordCreated(booking.id(), userId, now);
+        reportAvailabilityChange(booking);
+        return booking;
     }
 
     BookingPage history(long userId, Long beforeId, int size) {
@@ -86,7 +95,16 @@ class BookingService {
             db.sql("UPDATE bookings SET cancelled_at = :time WHERE id = :id")
                 .param("time", now).param("id", bookingId).update();
         }
-        return find(userId, bookingId, now);
+        Booking booking = find(userId, bookingId, now);
+        if (current.cancelledAt() == null) {
+            outbox.recordCancelled(booking.id(), userId, now);
+            reportAvailabilityChange(booking);
+        }
+        return booking;
+    }
+
+    private void reportAvailabilityChange(Booking booking) {
+        events.publishEvent(new SlotCache.ScheduleChanged(booking.roomId(), booking.date(), booking.period()));
     }
 
     private Booking find(long userId, long id, LocalDateTime now) {
@@ -99,7 +117,7 @@ class BookingService {
         SlotTime slot = slotTime(rs);
         var cancelledAt = rs.getObject("cancelled_at", LocalDateTime.class);
         boolean canCancel = cancelledAt == null && !rules.hasStarted(slot.date(), slot.period(), now);
-        return new Booking(rs.getLong("id"), rs.getLong("slot_id"), rs.getString("room_name"),
+        return new Booking(rs.getLong("id"), rs.getLong("slot_id"), rs.getLong("room_id"), rs.getString("room_name"),
             rs.getString("seat_label"), slot.date(), slot.period(), cancelledAt == null ? "BOOKED" : "CANCELLED",
             rs.getObject("created_at", LocalDateTime.class), cancelledAt, canCancel);
     }
@@ -118,7 +136,7 @@ class BookingService {
         return new ApiException(HttpStatus.NOT_FOUND, "BOOKING_NOT_FOUND", "预约不存在");
     }
 
-    record Booking(long id, long slotId, String roomName, String seatLabel, LocalDate date, Period period,
+    record Booking(long id, long slotId, long roomId, String roomName, String seatLabel, LocalDate date, Period period,
                    String status, LocalDateTime createdAt, LocalDateTime cancelledAt, boolean canCancel) {}
     record BookingPage(List<Booking> items, Long nextCursor) {}
     private record SlotTime(LocalDate date, Period period) {}

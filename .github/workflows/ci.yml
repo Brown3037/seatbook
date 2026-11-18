@@ -1,4 +1,4 @@
-name: MySQL integration tests
+name: Seatbook integration tests
 on:
   push:
   pull_request:
@@ -23,9 +23,34 @@ jobs:
           --health-interval=5s
           --health-timeout=5s
           --health-retries=24
+      redis:
+        image: redis:8.4-alpine
+        ports:
+          - 6379/tcp
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=5s
+          --health-timeout=3s
+          --health-retries=20
+      rabbitmq:
+        image: rabbitmq:4.3-management-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: seatbook_test
+          RABBITMQ_DEFAULT_PASS: ci-rabbit-only-not-for-use
+        ports:
+          - 5672/tcp
+        options: >-
+          --health-cmd="rabbitmq-diagnostics -q check_port_listener 5672"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=24
     env:
       SEATBOOK_TEST_DB_USER: seatbook_test
       SEATBOOK_TEST_DB_PASSWORD: ci-user-only-not-for-use
+      SEATBOOK_REDIS_HOST: 127.0.0.1
+      SEATBOOK_RABBITMQ_HOST: 127.0.0.1
+      SEATBOOK_RABBITMQ_USER: seatbook_test
+      SEATBOOK_RABBITMQ_PASSWORD: ci-rabbit-only-not-for-use
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-java@v5
@@ -33,6 +58,8 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: maven
-      - run: mvn -B -ntp -Pmysql-it verify
+      - run: mvn -B -ntp -Pintegration verify
         env:
           SEATBOOK_TEST_DB_URL: jdbc:mysql://127.0.0.1:${{ job.services.mysql.ports[3306] }}/seatbook_test
+          SEATBOOK_REDIS_PORT: ${{ job.services.redis.ports[6379] }}
+          SEATBOOK_RABBITMQ_PORT: ${{ job.services.rabbitmq.ports[5672] }}

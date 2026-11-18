@@ -11,6 +11,8 @@ let session = null;
 let nextCursor = null;
 let slotsRequest = 0;
 let historyRequest = 0;
+let notificationRequest = 0;
+let notificationPoll;
 
 class ApiError extends Error {
   constructor(status, message) {
@@ -40,16 +42,25 @@ function showSession(newSession) {
   session = newSession;
   nextCursor = null;
   historyRequest++;
+  notificationRequest++;
+  clearInterval(notificationPoll);
   authForm.hidden = Boolean(session);
   byId("session-info").hidden = !session;
   byId("publish").hidden = session?.account.role !== "ADMIN";
   byId("history").hidden = session?.account.role !== "STUDENT";
+  byId("notifications").hidden = session?.account.role !== "STUDENT";
   byId("identity").textContent = session ? session.account.username + " · " +
     (session.account.role === "ADMIN" ? "管理员" : "学生") : "";
   byId("booking-list").replaceChildren();
+  byId("notification-list").replaceChildren();
   byId("more").hidden = true;
   feedback("booking-message");
-  if (session?.account.role === "STUDENT") loadHistory();
+  feedback("notification-message");
+  if (session?.account.role === "STUDENT") {
+    loadHistory();
+    loadNotifications();
+    notificationPoll = setInterval(loadNotifications, 5000);
+  }
 }
 
 function sessionError(error, token) {
@@ -218,6 +229,36 @@ function makeBooking(booking) {
   return row;
 }
 
+async function loadNotifications() {
+  if (session?.account.role !== "STUDENT") return;
+  const token = session.accessToken;
+  const requestId = ++notificationRequest;
+  try {
+    const notifications = await api("/api/notifications", { token });
+    if (requestId !== notificationRequest) return;
+    byId("notification-list").replaceChildren(...notifications.map(makeNotification));
+    feedback("notification-message", notifications.length ? "" : "还没有预约通知。");
+  } catch (error) {
+    if (requestId !== notificationRequest) return;
+    sessionError(error, token);
+    feedback("notification-message", error.message, true);
+  }
+}
+
+function makeNotification(notification) {
+  const row = document.createElement("li");
+  row.className = "booking-row";
+  const details = document.createElement("div");
+  const title = document.createElement("strong");
+  const action = notification.type === "BOOKING_CREATED" ? "预约成功" : "已取消预约";
+  title.textContent = action + " · " + notification.roomName + " · " + notification.seatLabel;
+  const time = document.createElement("span");
+  time.textContent = notification.occurredAt.replace("T", " ").slice(0, 19);
+  details.append(title, time);
+  row.append(details);
+  return row;
+}
+
 async function init() {
   try {
     const [rooms, schedule] = await Promise.all([api("/api/rooms"), api("/api/schedule")]);
@@ -256,4 +297,5 @@ byId("logout").addEventListener("click", () => {
 });
 byId("publish").addEventListener("click", publish);
 byId("more").addEventListener("click", () => loadHistory(true));
+byId("refresh-notifications").addEventListener("click", loadNotifications);
 init();

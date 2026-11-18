@@ -20,6 +20,9 @@ try {
     $writer.WriteLine("SEATBOOK_JWT_SECRET=$(New-RandomBase64 32)")
     $writer.WriteLine("SEATBOOK_ADMIN_PASSWORD=$(New-RandomBase64 18)")
     $writer.WriteLine("SEATBOOK_HOST_PORT=$Port")
+    $writer.WriteLine("SEATBOOK_REDIS_PASSWORD=$(New-RandomBase64 24)")
+    $writer.WriteLine("SEATBOOK_RABBITMQ_PASSWORD=$(New-RandomBase64 24)")
+    $writer.WriteLine("SEATBOOK_RABBITMQ_UI_PORT=15672")
 } finally {
     $writer.Dispose()
 }
