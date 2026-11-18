@@ -13,6 +13,7 @@ let slotsRequest = 0;
 let historyRequest = 0;
 let notificationRequest = 0;
 let notificationPoll;
+let agentRequest = 0;
 
 class ApiError extends Error {
   constructor(status, message) {
@@ -43,19 +44,25 @@ function showSession(newSession) {
   nextCursor = null;
   historyRequest++;
   notificationRequest++;
+  agentRequest++;
   clearInterval(notificationPoll);
   authForm.hidden = Boolean(session);
   byId("session-info").hidden = !session;
   byId("publish").hidden = session?.account.role !== "ADMIN";
   byId("history").hidden = session?.account.role !== "STUDENT";
   byId("notifications").hidden = session?.account.role !== "STUDENT";
+  byId("agent").hidden = session?.account.role !== "STUDENT";
   byId("identity").textContent = session ? session.account.username + " · " +
     (session.account.role === "ADMIN" ? "管理员" : "学生") : "";
   byId("booking-list").replaceChildren();
   byId("notification-list").replaceChildren();
+  byId("agent-form").reset();
+  byId("agent-options").replaceChildren();
+  byId("ask-agent").disabled = false;
   byId("more").hidden = true;
   feedback("booking-message");
   feedback("notification-message");
+  feedback("agent-answer");
   if (session?.account.role === "STUDENT") {
     loadHistory();
     loadNotifications();
@@ -259,6 +266,60 @@ function makeNotification(notification) {
   return row;
 }
 
+async function askAgent(event) {
+  event.preventDefault();
+  if (session?.account.role !== "STUDENT") return;
+  const message = byId("agent-question").value.trim();
+  if (!message) {
+    feedback("agent-answer", "请输入要查询的问题。", true);
+    return;
+  }
+  const token = session.accessToken;
+  const requestId = ++agentRequest;
+  const button = byId("ask-agent");
+  button.disabled = true;
+  byId("agent-options").replaceChildren();
+  feedback("agent-answer", "正在查询…");
+  try {
+    const result = await api("/api/agent/ask", { method: "POST", body: { message }, token });
+    if (requestId !== agentRequest) return;
+    feedback("agent-answer", result.answer);
+    byId("agent-options").replaceChildren(...result.options.map(makeAgentOption));
+  } catch (error) {
+    if (requestId !== agentRequest) return;
+    sessionError(error, token);
+    feedback("agent-answer", error.message, true);
+  } finally {
+    if (requestId === agentRequest) button.disabled = false;
+  }
+}
+
+function makeAgentOption(option) {
+  const row = document.createElement("li");
+  row.className = "booking-row";
+  const details = document.createElement("div");
+  const title = document.createElement("strong");
+  title.textContent = option.roomName + " · " + option.availableCount + " 个可预约座位";
+  const time = document.createElement("span");
+  time.textContent = option.date + " " + periodNames[option.period] + " · " + option.sampleSeats.join("、");
+  details.append(title, time);
+  const view = document.createElement("button");
+  view.type = "button";
+  view.className = "secondary";
+  view.textContent = "查看座位";
+  view.addEventListener("click", () => {
+    room.value = String(option.roomId);
+    day.value = option.date;
+    period.value = option.period;
+    feedback("slot-message");
+    loadSlots();
+    byId("seat-title").scrollIntoView({ block: "start" });
+    room.focus({ preventScroll: true });
+  });
+  row.append(details, view);
+  return row;
+}
+
 async function init() {
   try {
     const [rooms, schedule] = await Promise.all([api("/api/rooms"), api("/api/schedule")]);
@@ -298,4 +359,11 @@ byId("logout").addEventListener("click", () => {
 byId("publish").addEventListener("click", publish);
 byId("more").addEventListener("click", () => loadHistory(true));
 byId("refresh-notifications").addEventListener("click", loadNotifications);
+byId("agent-form").addEventListener("submit", askAgent);
+for (const example of document.querySelectorAll("[data-agent-example]")) {
+  example.addEventListener("click", () => {
+    byId("agent-question").value = example.dataset.agentExample;
+    byId("agent-question").focus();
+  });
+}
 init();

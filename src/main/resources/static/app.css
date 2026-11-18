@@ -38,6 +38,10 @@ button:disabled { cursor: default; opacity: .65; }
 .seat { background: #e1f1e8; color: #154c3d; border-color: #adcebf; min-height: 50px; }
 .seat:disabled { background: #f1f2f1; color: #3d514d; border-color: var(--border); opacity: 1; }
 .account form { display: grid; gap: 13px; margin-top: 18px; }
+.agent-form { display: grid; gap: 8px; margin: 14px 0; }
+.agent-form textarea { font: inherit; color: inherit; border: 1px solid #b8cbc3; border-radius: 8px; padding: 10px; resize: vertical; }
+#agent-answer { white-space: pre-line; }
+#agent-options:empty { display: none; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .history { grid-column: 1 / -1; }
 .booking-list { list-style: none; padding: 0; margin: 13px 0; }

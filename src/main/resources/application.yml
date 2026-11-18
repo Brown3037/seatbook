@@ -53,6 +53,11 @@ seatbook:
   jwt-secret: ${SEATBOOK_JWT_SECRET}
   admin-password: ${SEATBOOK_ADMIN_PASSWORD:}
   outbox-poll-delay: 500ms
+  agent:
+    enabled: ${SEATBOOK_AGENT_ENABLED:false}
+    base-url: ${SEATBOOK_AGENT_BASE_URL:https://api.openai.com/v1}
+    api-key: ${SEATBOOK_AGENT_API_KEY:}
+    model: ${SEATBOOK_AGENT_MODEL:}
 springdoc:
   paths-to-match: /api/**
   swagger-ui:

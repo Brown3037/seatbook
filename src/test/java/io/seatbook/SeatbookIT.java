@@ -323,6 +323,32 @@ class SeatbookIT {
     }
 
     @Test
+    void agentReadsRealSeatInventoryThroughTheStudentEndpoint() throws Exception {
+        String admin = login("admin", ADMIN_PASSWORD);
+        String student = student();
+        String path = "/api/agent/ask";
+        String question = "{\"message\":\"明天下午静阅区有空位吗？\"}";
+        assertThat(request("POST", path, null, question).statusCode()).isEqualTo(401);
+        assertThat(request("POST", path, admin, question).statusCode()).isEqualTo(403);
+        assertThat(request("POST", path, student, "{\"message\":\"   \"}").statusCode()).isEqualTo(400);
+
+        var published = request("PUT", adminPath(1), admin,
+            "{\"date\":\"" + TODAY.plusDays(1) + "\",\"period\":\"AFTERNOON\"}");
+        assertThat(published.statusCode()).isEqualTo(200);
+        var before = request("GET", "/api/bookings", student, null);
+        assertThat((List<?>) value(before, "$.items")).isEmpty();
+
+        var answer = request("POST", path, student, question);
+        assertThat(answer.statusCode()).isEqualTo(200);
+        assertThat((String) value(answer, "$.mode")).isEqualTo("LOCAL");
+        List<String> tools = value(answer, "$.toolsUsed");
+        assertThat(tools).contains("find_available_slots");
+        assertThat((String) value(answer, "$.options[0].roomName")).isEqualTo("静阅区");
+        assertThat((Integer) value(answer, "$.options[0].availableCount")).isEqualTo(6);
+        assertThat((List<?>) value(request("GET", "/api/bookings", student, null), "$.items")).isEmpty();
+    }
+
+    @Test
     void malformedRabbitMessageArrivesInTheDeadLetterQueue() throws Exception {
         String messageId = UUID.randomUUID().toString();
         sendConfirmed("invalid-json", messageId);

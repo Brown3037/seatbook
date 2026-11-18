@@ -61,6 +61,10 @@ services:
       SEATBOOK_RABBITMQ_HOST: rabbitmq
       SEATBOOK_RABBITMQ_USER: seatbook
       SEATBOOK_RABBITMQ_PASSWORD: ${SEATBOOK_RABBITMQ_PASSWORD:?Set the RabbitMQ password in .env}
+      SEATBOOK_AGENT_ENABLED: ${SEATBOOK_AGENT_ENABLED:-false}
+      SEATBOOK_AGENT_BASE_URL: ${SEATBOOK_AGENT_BASE_URL:-https://api.openai.com/v1}
+      SEATBOOK_AGENT_API_KEY: ${SEATBOOK_AGENT_API_KEY:-}
+      SEATBOOK_AGENT_MODEL: ${SEATBOOK_AGENT_MODEL:-}
 volumes:
   seatbook-data:
   rabbitmq-data:

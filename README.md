@@ -11,9 +11,10 @@
 | 查询 | 按自习室、日期和时段查询座位，个人历史使用游标分页 |
 | Redis | 座位快照缓存、15 秒过期、提交后按时段失效、连接异常时查 MySQL |
 | RabbitMQ | 异步预约通知、事务 Outbox、发布确认、失败重试、消费去重、死信队列 |
+| Agent | 学生用自然语言查空位、比较自习室和查看规则。默认本地解析，支持 Spring AI 工具调用 |
 | 工程 | Flyway 版本管理、Swagger UI、Actuator 健康检查、Docker Compose、GitHub Actions、真实 MySQL / Redis / RabbitMQ 集成测试 |
 
-**技术栈**：Java 17 · Spring Boot 4.0 · Spring Security · Spring JDBC · MySQL/InnoDB · Spring Data Redis · Spring AMQP / RabbitMQ · Flyway · Maven · JUnit。
+**技术栈**：Java 17 · Spring Boot 4.0 · Spring Security · Spring JDBC · MySQL/InnoDB · Spring Data Redis · Spring AMQP / RabbitMQ · Spring AI 2.0 · Flyway · Maven · JUnit。
 
 ## 运行
 
@@ -65,6 +66,23 @@ mvn spring-boot:run
 3. 用另一账号尝试在同一时段预约同一座位。页面会显示该座位不可选，直接打 API 也会收到 409。原账号取消后，第二个账号即可预约。
 4. 想在 Swagger 调试时，用 `POST /api/auth/login` 获取 `accessToken`，再用 **Authorize** 输入该 token。管理员和学生需要各用自己的 token。
 
+## 使用智能预约助手
+
+用管理员开放明天下午的时段，再用学生账号登录。在「智能预约助手」输入「明天下午哪个自习室还有空位？」。推荐卡片显示真实座位数量，点击「查看座位」会填入筛选条件并重新查询。选择座位时才会提交预约。
+
+默认模式可以理解今天、明天、后天或 `YYYY-MM-DD`，配合上午、下午、晚上等关键词。可以带上房间名，也可以问「有哪些自习室？」或「预约规则是什么？」。它直接查询本项目的数据库和 Redis，部署后不需要模型密钥。
+
+如需让模型安排工具调用，给 `.env` 设置以下变量，再重启应用。
+
+| 环境变量 | 用途 |
+| --- | --- |
+| `SEATBOOK_AGENT_ENABLED=true` | 启用模型模式 |
+| `SEATBOOK_AGENT_BASE_URL` | OpenAI 兼容 API 的基础地址，默认 `https://api.openai.com/v1` |
+| `SEATBOOK_AGENT_API_KEY` | 所选服务的密钥，保存在本地 `.env` |
+| `SEATBOOK_AGENT_MODEL` | 支持工具调用的模型 ID |
+
+通过 Docker 启动时，修改配置后运行 `docker compose up -d` 让应用容器读取新值。配置模型后，问题文本和查询到的公开房间、时段及余位数据会发送给所选模型服务。每次请求最多调用模型三次、查询工具四次，模型超时或异常时切回本地解析。
+
 ## API 一览
 
 | 方法和路径 | 权限 | 用途 |
@@ -79,6 +97,7 @@ mvn spring-boot:run
 | `GET /api/bookings?size=20&beforeId=...` | 学生 | 个人历史，首次省略 `beforeId` |
 | `PUT /api/bookings/{bookingId}/cancellation` | 预约人 | 取消并返回记录 |
 | `GET /api/notifications` | 学生 | 查询本人最近 20 条预约通知 |
+| `POST /api/agent/ask` | 学生 | 提交最多 300 字符的 `message`，得到说明、推荐卡片和实际工具列表 |
 
 `period` 可用值为 `MORNING`、`AFTERNOON`、`EVENING`。`size` 范围为 1–100，下一页取上一次返回的 `nextCursor`。业务错误以 Problem Details 返回，常见状态为 400（参数错误）、401（未登录）、403（角色不匹配）、404（资源不可见）和 409（预约冲突或时段已关闭）。
 
@@ -93,6 +112,6 @@ $env:SEATBOOK_TEST_DB_PASSWORD = '<测试数据库密码>'
 mvn -Pintegration clean verify
 ```
 
-测试覆盖 **8 个学生并发预约同一座位**、身份认证、权限、重复放号和取消、分页及开场时间边界。新增测试验证 Redis 命中和提交后失效、RabbitMQ 重复投递去重、路由中断后的补发，以及无效消息进入死信队列。
+测试覆盖 **8 个学生并发预约同一座位**、权限、缓存失效、RabbitMQ 去重与补发、死信队列，以及学生助手只查询真实座位的流程。单独运行 `mvn test` 可用本地模拟模型服务验证 Spring AI 工具调用、模型循环上限和故障降级，无需模型密钥或中间件。
 
 [学习路线、源码导航和面试讲解](docs/learning.md)

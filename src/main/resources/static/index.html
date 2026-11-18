@@ -54,6 +54,21 @@
       </div>
       <p id="auth-message" class="feedback" role="status"></p>
     </section>
+    <section class="card history" id="agent" aria-labelledby="agent-title" hidden>
+      <h2 id="agent-title">智能预约助手</h2>
+      <form id="agent-form" class="agent-form">
+        <label for="agent-question">想查什么？</label>
+        <textarea id="agent-question" rows="2" maxlength="300" required
+          placeholder="例如：明天下午哪个自习室还有空位？"></textarea>
+        <div class="actions">
+          <button id="ask-agent" type="submit">提问</button>
+          <button type="button" class="secondary" data-agent-example="明天下午哪个自习室有空位？">明天下午的空位</button>
+          <button type="button" class="secondary" data-agent-example="预约规则是什么？">预约规则</button>
+        </div>
+      </form>
+      <p id="agent-answer" class="feedback" role="status"></p>
+      <ul id="agent-options" class="booking-list"></ul>
+    </section>
     <section class="card history" id="history" aria-labelledby="history-title" hidden>
       <h2 id="history-title">我的预约</h2>
       <ul id="booking-list" class="booking-list"></ul>
