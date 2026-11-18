@@ -4,6 +4,7 @@ import io.seatbook.common.ApiException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
@@ -13,10 +14,14 @@ import org.springframework.transaction.annotation.Transactional;
 class RoomService {
     private final JdbcClient db;
     private final ScheduleRules rules;
+    private final SlotCache cache;
+    private final ApplicationEventPublisher events;
 
-    RoomService(JdbcClient db, ScheduleRules rules) {
+    RoomService(JdbcClient db, ScheduleRules rules, SlotCache cache, ApplicationEventPublisher events) {
         this.db = db;
         this.rules = rules;
+        this.cache = cache;
+        this.events = events;
     }
 
     List<Room> listRooms() {
@@ -33,8 +38,18 @@ class RoomService {
     List<Slot> listSlots(long roomId, LocalDate date, Period period) {
         LocalDateTime now = rules.now();
         rules.requireInWindow(date, now.toLocalDate());
-        requireRoom(roomId);
-        return readSlots(roomId, date, period, now);
+        if (rules.hasStarted(date, period, now)) {
+            requireRoom(roomId);
+            return readSlots(roomId, date, period, now);
+        }
+        List<Slot> slots = cache.get(new SlotCache.ScheduleChanged(roomId, date, period), () -> {
+            requireRoom(roomId);
+            return readSlots(roomId, date, period, now);
+        });
+        if (rules.hasStarted(date, period, rules.now())) {
+            return slots.stream().map(slot -> new Slot(slot.id(), slot.seatLabel(), date, period, false)).toList();
+        }
+        return slots;
     }
 
     @Transactional
@@ -50,6 +65,7 @@ class RoomService {
             SELECT s.id, :day, :period FROM seats s WHERE s.room_id = :roomId ORDER BY s.id
             ON DUPLICATE KEY UPDATE id = seat_slots.id
             """).param("day", date).param("period", period.name()).param("roomId", roomId).update();
+        events.publishEvent(new SlotCache.ScheduleChanged(roomId, date, period));
         return readSlots(roomId, date, period, now);
     }
 

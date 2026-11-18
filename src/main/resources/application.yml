@@ -10,6 +10,36 @@ spring:
   mvc:
     problemdetails:
       enabled: true
+  data:
+    redis:
+      host: ${SEATBOOK_REDIS_HOST:127.0.0.1}
+      port: ${SEATBOOK_REDIS_PORT:6379}
+      password: ${SEATBOOK_REDIS_PASSWORD:}
+      connect-timeout: 500ms
+      timeout: 500ms
+      repositories:
+        enabled: false
+  rabbitmq:
+    host: ${SEATBOOK_RABBITMQ_HOST:127.0.0.1}
+    port: ${SEATBOOK_RABBITMQ_PORT:5672}
+    username: ${SEATBOOK_RABBITMQ_USER:guest}
+    password: ${SEATBOOK_RABBITMQ_PASSWORD:guest}
+    connection-timeout: 2s
+    publisher-confirm-type: correlated
+    publisher-returns: true
+    template:
+      mandatory: true
+    listener:
+      simple:
+        acknowledge-mode: auto
+        missing-queues-fatal: false
+        default-requeue-rejected: false
+        prefetch: 20
+        retry:
+          enabled: true
+          max-retries: 2
+          initial-interval: 300ms
+          multiplier: 2
 server:
   address: ${SEATBOOK_BIND_ADDRESS:127.0.0.1}
   port: ${SEATBOOK_PORT:8080}
@@ -22,6 +52,12 @@ seatbook:
   zone: Asia/Shanghai
   jwt-secret: ${SEATBOOK_JWT_SECRET}
   admin-password: ${SEATBOOK_ADMIN_PASSWORD:}
+  outbox-poll-delay: 500ms
+  agent:
+    enabled: ${SEATBOOK_AGENT_ENABLED:false}
+    base-url: ${SEATBOOK_AGENT_BASE_URL:https://api.openai.com/v1}
+    api-key: ${SEATBOOK_AGENT_API_KEY:}
+    model: ${SEATBOOK_AGENT_MODEL:}
 springdoc:
   paths-to-match: /api/**
   swagger-ui:

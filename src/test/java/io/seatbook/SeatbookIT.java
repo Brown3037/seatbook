@@ -1,16 +1,19 @@
 package io.seatbook;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
 
 import com.jayway.jsonpath.JsonPath;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
@@ -24,16 +27,24 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.amqp.core.AmqpAdmin;
+import org.springframework.amqp.core.Binding;
+import org.springframework.amqp.core.MessageBuilder;
+import org.springframework.amqp.core.MessageProperties;
+import org.springframework.amqp.rabbit.connection.CorrelationData;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.jdbc.support.GeneratedKeyHolder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import tools.jackson.databind.json.JsonMapper;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
     classes = {SeatbookApplication.class, SeatbookIT.TestClockConfiguration.class})
@@ -49,6 +60,19 @@ class SeatbookIT {
     JdbcClient db;
     @Autowired
     TestClock testClock;
+    @Autowired
+    StringRedisTemplate redis;
+    @Autowired
+    RabbitTemplate rabbit;
+    @Autowired
+    AmqpAdmin rabbitAdmin;
+    @Autowired
+    JsonMapper json;
+
+    private static final String EXCHANGE = "seatbook.booking.events";
+    private static final String ROUTE = "booking.changed.v1";
+    private static final String QUEUE = "seatbook.booking.notifications.v1";
+    private static final String DEAD_LETTER_QUEUE = "seatbook.booking.notifications.dead.v1";
 
     private final HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
 
@@ -207,6 +231,150 @@ class SeatbookIT {
         assertThat(closed.statusCode()).isEqualTo(409);
         assertThat((String) value(closed, "$.code")).isEqualTo("SLOT_CLOSED");
         assertThat(request("PUT", "/api/bookings/" + booking + "/cancellation", student, null).statusCode()).isEqualTo(409);
+    }
+
+    @Test
+    void redisServesTheSnapshotAndACommittedBookingInvalidatesIt() throws Exception {
+        long room = room();
+        var slots = publish(login("admin", ADMIN_PASSWORD), room, TODAY);
+        String path = slotsPath(room, TODAY);
+        String prefix = "seatbook:v1:slots:" + room + ":" + TODAY + ":MORNING";
+        var first = request("GET", path, null, null);
+        assertThat((String) value(first, "$[0].seatLabel")).isEqualTo("T01");
+        String revision = redis.opsForValue().get(prefix + ":revision");
+        assertThat(revision).isNotBlank();
+        assertThat(redis.getExpire(prefix + ":snapshot:" + revision)).isBetween(1L, 15L);
+
+        // Updating a fixture directly bypasses the app, so a read should still return the cached label.
+        db.sql("UPDATE seats SET label = 'T00' WHERE room_id = :room AND label = 'T01'")
+            .param("room", room).update();
+        assertThat((String) value(request("GET", path, null, null), "$[0].seatLabel")).isEqualTo("T01");
+        var booked = book(student(), slots.get(0));
+        assertThat(booked.statusCode()).isEqualTo(201);
+        assertThat(redis.opsForValue().get(prefix + ":revision")).isNotEqualTo(revision);
+
+        var refreshed = request("GET", path, null, null);
+        assertThat((String) value(refreshed, "$[0].seatLabel")).isEqualTo("T00");
+        assertThat((Boolean) value(refreshed, "$[0].available")).isFalse();
+        assertThat((Boolean) value(refreshed, "$[1].available")).isTrue();
+        testClock.now.set(Instant.parse("2030-04-02T00:00:00Z"));
+        assertThat((Boolean) value(request("GET", path, null, null), "$[1].available")).isFalse();
+    }
+
+    @Test
+    void rabbitRedeliveryKeepsOneNotificationPerEventAndOnlyTheOwnerSeesIt() throws Exception {
+        long room = room();
+        long slot = publish(login("admin", ADMIN_PASSWORD), room, TODAY).get(0);
+        String owner = student();
+        String other = student();
+        var created = book(owner, slot);
+        assertThat(created.statusCode()).isEqualTo(201);
+        long booking = ((Number) value(created, "$.id")).longValue();
+        await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
+            assertThat(notificationTypes(owner)).containsExactly("BOOKING_CREATED");
+            assertThat(published(booking)).isEqualTo(1);
+        });
+        var replay = db.sql("""
+            SELECT event_id, user_id, event_type, occurred_at FROM booking_outbox WHERE booking_id = :booking
+            """).param("booking", booking).query((rs, row) -> Map.of(
+                "eventId", rs.getString("event_id"), "bookingId", booking, "userId", rs.getLong("user_id"),
+                "type", rs.getString("event_type"), "occurredAt", rs.getObject("occurred_at", LocalDateTime.class)))
+            .single();
+        String eventId = (String) replay.get("eventId");
+        sendConfirmed(json.writeValueAsString(replay), eventId);
+        sendConfirmed(json.writeValueAsString(replay), eventId);
+
+        testClock.now.set(BEFORE_MORNING.plusSeconds(1));
+        String cancellation = "/api/bookings/" + booking + "/cancellation";
+        assertThat(request("PUT", cancellation, owner, null).statusCode()).isEqualTo(200);
+        assertThat(request("PUT", cancellation, owner, null).statusCode()).isEqualTo(200);
+        await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
+            assertThat(notificationTypes(owner)).containsExactly("BOOKING_CANCELLED", "BOOKING_CREATED");
+            assertThat(published(booking)).isEqualTo(2);
+        });
+        assertThat(notificationTypes(other)).isEmpty();
+        assertThat(request("GET", "/api/notifications", null, null).statusCode()).isEqualTo(401);
+    }
+
+    @Test
+    void unroutableBookingEventIsRetriedAfterRabbitBindingReturns() throws Exception {
+        long room = room();
+        long slot = publish(login("admin", ADMIN_PASSWORD), room, TODAY).get(0);
+        String owner = student();
+        var binding = new Binding(QUEUE, Binding.DestinationType.QUEUE, EXCHANGE, ROUTE, Map.of());
+        long booking;
+        rabbitAdmin.removeBinding(binding);
+        try {
+            var response = book(owner, slot);
+            assertThat(response.statusCode()).isEqualTo(201);
+            booking = ((Number) value(response, "$.id")).longValue();
+            await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
+                assertThat(db.sql("SELECT attempts FROM booking_outbox WHERE booking_id = :booking")
+                    .param("booking", booking).query(Integer.class).single()).isPositive();
+                assertThat(published(booking)).isZero();
+            });
+        } finally {
+            rabbitAdmin.declareBinding(binding);
+        }
+        await().atMost(Duration.ofSeconds(15)).untilAsserted(() -> {
+            assertThat(notificationTypes(owner)).containsExactly("BOOKING_CREATED");
+            assertThat(published(booking)).isEqualTo(1);
+        });
+    }
+
+    @Test
+    void agentReadsRealSeatInventoryThroughTheStudentEndpoint() throws Exception {
+        String admin = login("admin", ADMIN_PASSWORD);
+        String student = student();
+        String path = "/api/agent/ask";
+        String question = "{\"message\":\"明天下午静阅区有空位吗？\"}";
+        assertThat(request("POST", path, null, question).statusCode()).isEqualTo(401);
+        assertThat(request("POST", path, admin, question).statusCode()).isEqualTo(403);
+        assertThat(request("POST", path, student, "{\"message\":\"   \"}").statusCode()).isEqualTo(400);
+
+        var published = request("PUT", adminPath(1), admin,
+            "{\"date\":\"" + TODAY.plusDays(1) + "\",\"period\":\"AFTERNOON\"}");
+        assertThat(published.statusCode()).isEqualTo(200);
+        var before = request("GET", "/api/bookings", student, null);
+        assertThat((List<?>) value(before, "$.items")).isEmpty();
+
+        var answer = request("POST", path, student, question);
+        assertThat(answer.statusCode()).isEqualTo(200);
+        assertThat((String) value(answer, "$.mode")).isEqualTo("LOCAL");
+        List<String> tools = value(answer, "$.toolsUsed");
+        assertThat(tools).contains("find_available_slots");
+        assertThat((String) value(answer, "$.options[0].roomName")).isEqualTo("静阅区");
+        assertThat((Integer) value(answer, "$.options[0].availableCount")).isEqualTo(6);
+        assertThat((List<?>) value(request("GET", "/api/bookings", student, null), "$.items")).isEmpty();
+    }
+
+    @Test
+    void malformedRabbitMessageArrivesInTheDeadLetterQueue() throws Exception {
+        String messageId = UUID.randomUUID().toString();
+        sendConfirmed("invalid-json", messageId);
+        var deadLetter = rabbit.receive(DEAD_LETTER_QUEUE, 10000);
+        assertThat(deadLetter).isNotNull();
+        assertThat(deadLetter.getMessageProperties().getMessageId()).isEqualTo(messageId);
+    }
+
+    private List<String> notificationTypes(String token) throws Exception {
+        var response = request("GET", "/api/notifications", token, null);
+        assertThat(response.statusCode()).as(response.body()).isEqualTo(200);
+        return value(response, "$[*].type");
+    }
+
+    private int published(long booking) {
+        return db.sql("SELECT COUNT(*) FROM booking_outbox WHERE booking_id = :booking AND published_at IS NOT NULL")
+            .param("booking", booking).query(Integer.class).single();
+    }
+
+    private void sendConfirmed(String body, String id) throws Exception {
+        var message = MessageBuilder.withBody(body.getBytes(StandardCharsets.UTF_8))
+            .setMessageId(id).setContentType(MessageProperties.CONTENT_TYPE_JSON).build();
+        var correlation = new CorrelationData();
+        rabbit.send(EXCHANGE, ROUTE, message, correlation);
+        assertThat(correlation.getFuture().get(5, TimeUnit.SECONDS).ack()).isTrue();
+        assertThat(correlation.getReturned()).isNull();
     }
 
     private List<HttpResponse<String>> race(List<Callable<HttpResponse<String>>> tasks) throws Exception {

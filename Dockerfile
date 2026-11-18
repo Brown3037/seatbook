@@ -7,7 +7,7 @@ RUN mvn -B -ntp -DskipTests package
 
 FROM eclipse-temurin:17-jre
 WORKDIR /app
-COPY --from=build --chown=10001:10001 /workspace/target/seatbook-1.0.0.jar /app/app.jar
+COPY --from=build --chown=10001:10001 /workspace/target/seatbook-1.2.0.jar /app/app.jar
 USER 10001:10001
 EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "/app/app.jar"]

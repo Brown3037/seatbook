@@ -9,9 +9,12 @@
 | 预约 | 同一座位与时段最多一单，同一用户同一时段最多一单 |
 | 取消 | 时段开始前可取消，重复调用返回同一条记录，取消后释放名额 |
 | 查询 | 按自习室、日期和时段查询座位，个人历史使用游标分页 |
-| 工程 | Flyway 初始化和版本管理、Swagger UI、Actuator 健康检查、Docker Compose、GitHub Actions、真实 MySQL 集成测试 |
+| Redis | 座位快照缓存、15 秒过期、提交后按时段失效、连接异常时查 MySQL |
+| RabbitMQ | 异步预约通知、事务 Outbox、发布确认、失败重试、消费去重、死信队列 |
+| Agent | 学生用自然语言查空位、比较自习室和查看规则。默认本地解析，支持 Spring AI 工具调用 |
+| 工程 | Flyway 版本管理、Swagger UI、Actuator 健康检查、Docker Compose、GitHub Actions、真实 MySQL / Redis / RabbitMQ 集成测试 |
 
-**技术栈**：Java 17 · Spring Boot 4.0 · Spring Security · Spring JDBC · MySQL/InnoDB · Flyway · Maven · JUnit。
+**技术栈**：Java 17 · Spring Boot 4.0 · Spring Security · Spring JDBC · MySQL/InnoDB · Spring Data Redis · Spring AMQP / RabbitMQ · Spring AI 2.0 · Flyway · Maven · JUnit。
 
 ## 运行
 
@@ -25,19 +28,21 @@ docker compose up --build -d
 docker compose ps
 ```
 
-初始化脚本创建 `.env` 并生成随机密码和 JWT 密钥。已有 `.env` 时直接复用。其他系统可以复制 `.env.example` 为 `.env` 并填写四个随机值，其中 `SEATBOOK_JWT_SECRET` 要填至少 32 个随机字节的 Base64 编码，例如用 `openssl rand -base64 32` 生成。
+初始化脚本创建 `.env` 并生成随机密码和 JWT 密钥。已有 1.0 版 `.env` 的情况下，保留原值并补上 `SEATBOOK_REDIS_PASSWORD` 和 `SEATBOOK_RABBITMQ_PASSWORD` 两个独立的随机值。其他系统可以复制 `.env.example` 为 `.env` 并填写密码与密钥；`SEATBOOK_JWT_SECRET` 要填至少 32 个随机字节的 Base64 编码，例如用 `openssl rand -base64 32` 生成。
 
 - 演示页面：`http://localhost:8080/`
 - Swagger UI：`http://localhost:8080/swagger-ui/index.html`
 - 健康检查：`http://localhost:8080/actuator/health`
+- RabbitMQ 管理台：`http://localhost:15672/`，用户名 `seatbook`，密码取 `.env` 中的 `SEATBOOK_RABBITMQ_PASSWORD`。
 
-如本地 8080 已占用，把 `.env` 的 `SEATBOOK_HOST_PORT` 改为可用端口。停止演示可运行 `docker compose down`，命名卷保留 MySQL 数据。管理员只在用户表中不存在 `admin` 时创建。
+如本地 8080 或 15672 已占用，修改 `.env` 中的 `SEATBOOK_HOST_PORT` 或 `SEATBOOK_RABBITMQ_UI_PORT`。运行 `docker compose down` 停止演示，命名卷保留 MySQL 和 RabbitMQ 数据。管理员只在用户表中不存在 `admin` 时创建。
 
-### 使用 Windows 本地 JDK、Maven 和 MySQL
+### 使用本地 JDK 和 Maven
 
 1. 从项目根目录运行 `.\scripts\New-LocalEnv.ps1` 生成 `.env`。如果已经生成，使用现有文件。
 2. 在 MySQL 8.0 或 8.4 中创建空库 `seatbook`（字符集 `utf8mb4`）。创建可从本机连接的应用账号 `seatbook`，密码取 `.env` 中的 `SEATBOOK_DB_PASSWORD`，授予它这个库的读写和迁移权限。
-3. 从项目根目录执行：
+3. 准备可连接的 Redis 和 RabbitMQ。默认端口分别为 6379 和 5672。非本机实例通过 `SEATBOOK_REDIS_HOST`、`SEATBOOK_REDIS_PORT`、`SEATBOOK_RABBITMQ_HOST` 和 `SEATBOOK_RABBITMQ_PORT` 配置。
+4. 从项目根目录执行：
 
 ```powershell
 # 加载 .env 到当前 PowerShell 会话
@@ -48,6 +53,7 @@ Get-Content .env | ForEach-Object {
 
 $env:SEATBOOK_DB_URL = 'jdbc:mysql://127.0.0.1:3306/seatbook'
 $env:SEATBOOK_DB_USER = 'seatbook'
+$env:SEATBOOK_RABBITMQ_USER = 'seatbook'  # 改为你的 RabbitMQ 应用用户
 mvn spring-boot:run
 ```
 
@@ -56,9 +62,26 @@ mvn spring-boot:run
 ## 试一遍完整流程
 
 1. 用管理员用户名 `admin` 和 `.env` 中的 `SEATBOOK_ADMIN_PASSWORD` 登录。选择明天、任一自习室和时段，点击「开放所选时段」。
-2. 退出后注册一个学生账号。在同一自习室和时段选任一可预约座位，在「我的预约」查看记录。
+2. 退出后注册一个学生账号。在同一自习室和时段选任一可预约座位，在「我的预约」查看记录。「预约通知」会定时刷新，也可以手动刷新。
 3. 用另一账号尝试在同一时段预约同一座位。页面会显示该座位不可选，直接打 API 也会收到 409。原账号取消后，第二个账号即可预约。
 4. 想在 Swagger 调试时，用 `POST /api/auth/login` 获取 `accessToken`，再用 **Authorize** 输入该 token。管理员和学生需要各用自己的 token。
+
+## 使用智能预约助手
+
+用管理员开放明天下午的时段，再用学生账号登录。在「智能预约助手」输入「明天下午哪个自习室还有空位？」。推荐卡片显示真实座位数量，点击「查看座位」会填入筛选条件并重新查询。选择座位时才会提交预约。
+
+默认模式可以理解今天、明天、后天或 `YYYY-MM-DD`，配合上午、下午、晚上等关键词。可以带上房间名，也可以问「有哪些自习室？」或「预约规则是什么？」。它直接查询本项目的数据库和 Redis，部署后不需要模型密钥。
+
+如需让模型安排工具调用，给 `.env` 设置以下变量，再重启应用。
+
+| 环境变量 | 用途 |
+| --- | --- |
+| `SEATBOOK_AGENT_ENABLED=true` | 启用模型模式 |
+| `SEATBOOK_AGENT_BASE_URL` | OpenAI 兼容 API 的基础地址，默认 `https://api.openai.com/v1` |
+| `SEATBOOK_AGENT_API_KEY` | 所选服务的密钥，保存在本地 `.env` |
+| `SEATBOOK_AGENT_MODEL` | 支持工具调用的模型 ID |
+
+通过 Docker 启动时，修改配置后运行 `docker compose up -d` 让应用容器读取新值。配置模型后，问题文本和查询到的公开房间、时段及余位数据会发送给所选模型服务。每次请求最多调用模型三次、查询工具四次，模型超时或异常时切回本地解析。
 
 ## API 一览
 
@@ -73,20 +96,22 @@ mvn spring-boot:run
 | `POST /api/bookings` | 学生 | 预约座位，提交 `slotId` |
 | `GET /api/bookings?size=20&beforeId=...` | 学生 | 个人历史，首次省略 `beforeId` |
 | `PUT /api/bookings/{bookingId}/cancellation` | 预约人 | 取消并返回记录 |
+| `GET /api/notifications` | 学生 | 查询本人最近 20 条预约通知 |
+| `POST /api/agent/ask` | 学生 | 提交最多 300 字符的 `message`，得到说明、推荐卡片和实际工具列表 |
 
 `period` 可用值为 `MORNING`、`AFTERNOON`、`EVENING`。`size` 范围为 1–100，下一页取上一次返回的 `nextCursor`。业务错误以 Problem Details 返回，常见状态为 400（参数错误）、401（未登录）、403（角色不匹配）、404（资源不可见）和 409（预约冲突或时段已关闭）。
 
 ## 复跑集成测试
 
-准备独立的空数据库 `seatbook_test`，给测试账号授予该库权限。测试会迁移并插入测试数据。运行：
+准备独立的空数据库 `seatbook_test`，并使用专用 Redis 和 RabbitMQ 实例。测试会插入测试数据，并临时移除再恢复测试队列的路由绑定。通过前面的环境变量配置 Redis 和 RabbitMQ，再运行：
 
 ```powershell
 $env:SEATBOOK_TEST_DB_URL = 'jdbc:mysql://127.0.0.1:3306/seatbook_test'
 $env:SEATBOOK_TEST_DB_USER = 'seatbook_test'
 $env:SEATBOOK_TEST_DB_PASSWORD = '<测试数据库密码>'
-mvn -Pmysql-it clean verify
+mvn -Pintegration clean verify
 ```
 
-其中一个测试会让 **8 个学生并发预约同一座位**，断言返回 1 个 201、7 个 409，且数据库里只有一条有效记录。其他用例覆盖身份认证、角色限制、重复放号、两座位同账号冲突、取消和释放、游标分页及开场时间边界。
+测试覆盖 **8 个学生并发预约同一座位**、权限、缓存失效、RabbitMQ 去重与补发、死信队列，以及学生助手只查询真实座位的流程。单独运行 `mvn test` 可用本地模拟模型服务验证 Spring AI 工具调用、模型循环上限和故障降级，无需模型密钥或中间件。
 
 [学习路线、源码导航和面试讲解](docs/learning.md)

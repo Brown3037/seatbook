@@ -13,10 +13,39 @@ services:
       interval: 5s
       timeout: 5s
       retries: 24
+  redis:
+    image: redis:8.4-alpine
+    command: ["redis-server", "--requirepass", "${SEATBOOK_REDIS_PASSWORD:?Set the Redis password in .env}"]
+    environment:
+      REDISCLI_AUTH: ${SEATBOOK_REDIS_PASSWORD:?Set the Redis password in .env}
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  rabbitmq:
+    image: rabbitmq:4.3-management-alpine
+    hostname: seatbook-rabbit
+    environment:
+      RABBITMQ_DEFAULT_USER: seatbook
+      RABBITMQ_DEFAULT_PASS: ${SEATBOOK_RABBITMQ_PASSWORD:?Set the RabbitMQ password in .env}
+    ports:
+      - "127.0.0.1:${SEATBOOK_RABBITMQ_UI_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_listener", "5672"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
   app:
     build: .
     depends_on:
       db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
         condition: service_healthy
     ports:
       - "127.0.0.1:${SEATBOOK_HOST_PORT:-8080}:8080"
@@ -27,5 +56,15 @@ services:
       SEATBOOK_DB_PASSWORD: ${SEATBOOK_DB_PASSWORD:?Generate the .env file first}
       SEATBOOK_JWT_SECRET: ${SEATBOOK_JWT_SECRET:?Generate the .env file first}
       SEATBOOK_ADMIN_PASSWORD: ${SEATBOOK_ADMIN_PASSWORD:?Generate the .env file first}
+      SEATBOOK_REDIS_HOST: redis
+      SEATBOOK_REDIS_PASSWORD: ${SEATBOOK_REDIS_PASSWORD:?Set the Redis password in .env}
+      SEATBOOK_RABBITMQ_HOST: rabbitmq
+      SEATBOOK_RABBITMQ_USER: seatbook
+      SEATBOOK_RABBITMQ_PASSWORD: ${SEATBOOK_RABBITMQ_PASSWORD:?Set the RabbitMQ password in .env}
+      SEATBOOK_AGENT_ENABLED: ${SEATBOOK_AGENT_ENABLED:-false}
+      SEATBOOK_AGENT_BASE_URL: ${SEATBOOK_AGENT_BASE_URL:-https://api.openai.com/v1}
+      SEATBOOK_AGENT_API_KEY: ${SEATBOOK_AGENT_API_KEY:-}
+      SEATBOOK_AGENT_MODEL: ${SEATBOOK_AGENT_MODEL:-}
 volumes:
   seatbook-data:
+  rabbitmq-data:
